@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { useRapier, useBeforePhysicsStep, useAfterPhysicsStep } from '@react-three/rapier'
 import * as THREE from 'three'
 import URDFLoader from 'urdf-loader'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
@@ -8,7 +7,7 @@ import { solveCCDIK } from '../systems/CCDIK.js'
 import { retargetHand, RetargetingFilter } from '../systems/HandRetargeting.js'
 import { ExponentialSmoother, QuaternionSmoother } from '../systems/ImpedanceControl.js'
 import { WeightedMovingFilter } from '../systems/WeightedMovingFilter.js'
-import { PhysicsManager } from '../systems/PhysicsManager.js'
+import { ACTIVE_JOINT_NAMES } from '../systems/PhysicsBridge.js'
 import { XR_JOINT_NAMES } from '../constants/kinematics.js'
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
@@ -37,20 +36,8 @@ const ARM_CHAIN = {
 }
 const HAND_LINK = { left: 'left_hand_palm_link', right: 'right_hand_palm_link' }
 
-const COLLISION_OVERRIDES = {
-  left_shoulder_roll_joint:   { lower: -0.2 },
-  right_shoulder_roll_joint:  { upper:  0.2 },
-  left_shoulder_pitch_joint:  { lower: -2.0, upper: 2.0 },
-  right_shoulder_pitch_joint: { lower: -2.0, upper: 2.0 },
-  left_shoulder_yaw_joint:    { lower: -1.5, upper: 1.5 },
-  right_shoulder_yaw_joint:   { lower: -1.5, upper: 1.5 },
-  left_elbow_joint:           { lower: 0.1 },
-  right_elbow_joint:          { lower: 0.1 },
-}
-
 const EYE_LINK = 'mid360_link'
 const EYE_LINK_FALLBACK = 'head_link'
-const COLLISION_GRACE_FRAMES = 30
 
 // Frame correction: WebXR wrist has -Z=fingers, +Y=back-of-hand.
 // URDF palm has +X=fingers. Left palm faces -Y, right palm faces +Y
@@ -71,9 +58,8 @@ const _wristQuat = new THREE.Quaternion()
 const _correctedQuat = new THREE.Quaternion()
 
 
-export function URDFRobot({ vrMode = 'unlocked', worldRef }) {
+export function URDFRobot({ vrMode = 'unlocked', worldRef, physicsBridge, onTargetAnglesRef }) {
   const { gl, camera } = useThree()
-  const { world, rapier } = useRapier()
   const groupRef = useRef()
   const [robot, setRobot] = useState(null)
   const calibrated = useRef(false)
@@ -87,10 +73,13 @@ export function URDFRobot({ vrMode = 'unlocked', worldRef }) {
   const retargetL = useRef(new RetargetingFilter(0.4))
   const retargetR = useRef(new RetargetingFilter(0.4))
 
-  const physicsRef = useRef(null)
-  const safeAngles = useRef({ left: new Float64Array(7), right: new Float64Array(7) })
-  const collision = useRef({ left: false, right: false })
-  const trackingFrames = useRef({ left: 0, right: 0 })
+  // Buffer for 28 target joint angles sent to MuJoCo each frame
+  const targetAngles = useRef(new Float64Array(28))
+
+  // Expose targetAngles ref to parent for EpisodeRecorder
+  useEffect(() => {
+    if (onTargetAnglesRef) onTargetAnglesRef(targetAngles)
+  }, [onTargetAnglesRef])
 
   // ── Load URDF ────────────────────────────────────────────────────────────
 
@@ -128,7 +117,7 @@ export function URDFRobot({ vrMode = 'unlocked', worldRef }) {
     return () => { cancelled = true }
   }, [])
 
-  // ── Setup robot + physics ────────────────────────────────────────────────
+  // ── Setup robot ────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!robot || !groupRef.current) return
@@ -145,49 +134,17 @@ export function URDFRobot({ vrMode = 'unlocked', worldRef }) {
     groupRef.current.position.y = 0.75
     groupRef.current.updateMatrixWorld(true)
 
-    for (const [name, ov] of Object.entries(COLLISION_OVERRIDES)) {
-      const j = robot.joints?.[name]
-      if (!j?.limit) continue
-      if (ov.lower !== undefined) j.limit.lower = Math.max(j.limit.lower, ov.lower)
-      if (ov.upper !== undefined) j.limit.upper = Math.min(j.limit.upper, ov.upper)
-    }
-
-    groupRef.current.updateMatrixWorld(true)
-
-    if (world && rapier) {
-      const pm = new PhysicsManager(rapier, world)
-      pm.init(robot)
-      physicsRef.current = pm
-    }
-
     calibrated.current = false
 
     return () => {
       groupRef.current?.remove(robot)
-      physicsRef.current?.dispose()
-      physicsRef.current = null
     }
-  }, [robot, world, rapier])
+  }, [robot])
 
   useEffect(() => {
     if (!robot?.links?.head_link) return
     robot.links.head_link.visible = vrMode !== 'locked'
   }, [robot, vrMode])
-
-  // ── Physics sync ─────────────────────────────────────────────────────────
-
-  useBeforePhysicsStep(() => {
-    if (!robot || !physicsRef.current) return
-    groupRef.current?.updateMatrixWorld(true)
-    physicsRef.current.syncToPhysics(robot)
-  })
-
-  useAfterPhysicsStep(() => {
-    if (!physicsRef.current) return
-    const c = physicsRef.current.checkCollisions()
-    collision.current.left = c.left
-    collision.current.right = c.right
-  })
 
   // ── Main frame loop ──────────────────────────────────────────────────────
 
@@ -218,8 +175,6 @@ export function URDFRobot({ vrMode = 'unlocked', worldRef }) {
       const xrJoints = readXRJoints(xrFrame, source, refSpace)
       if (!xrJoints['wrist']) continue
 
-      const frames = ++trackingFrames.current[side]
-
       const correction = side === 'left' ? XR_TO_URDF_L : XR_TO_URDF_R
       _correctedQuat.copy(xrJoints['wrist'].quaternion).multiply(correction)
 
@@ -232,14 +187,33 @@ export function URDFRobot({ vrMode = 'unlocked', worldRef }) {
 
       if (chain.length > 0 && endLink) {
         const filter = side === 'left' ? jointFilterL.current : jointFilterR.current
-        const colliding = collision.current[side] && frames > COLLISION_GRACE_FRAMES
-
         solveAndFilter(chain, endLink, _wristPos, _wristQuat, filter)
       }
 
+      // Retarget hand fingers
       const raw = retargetHand(xrJoints)
       const rt = side === 'left' ? retargetL.current : retargetR.current
       applyFingerAngles(robot, side, rt.update(raw))
+    }
+
+    // ── MuJoCo bridge: send targets and apply solved state ────────────
+    if (physicsBridge && physicsBridge.ready) {
+      // Collect current joint angles into the 28-element target buffer
+      const tgt = targetAngles.current
+      for (let i = 0; i < ACTIVE_JOINT_NAMES.length; i++) {
+        const j = robot.joints?.[ACTIVE_JOINT_NAMES[i]]
+        tgt[i] = j ? (j.angle || 0) : 0
+      }
+      physicsBridge.writeTargets(tgt)
+
+      // Read solved state from MuJoCo and apply to visual model
+      const state = physicsBridge.readState()
+      if (state) {
+        for (let i = 0; i < ACTIVE_JOINT_NAMES.length; i++) {
+          const j = robot.joints?.[ACTIVE_JOINT_NAMES[i]]
+          if (j?.setJointValue) j.setJointValue(state.qpos[i])
+        }
+      }
     }
   })
 
@@ -300,17 +274,6 @@ function solveAndFilter(chain, endLink, targetPos, targetQuat, filter) {
   chain.forEach((j, i) => {
     if (j.setJointValue && i < filtered.length) j.setJointValue(filtered[i])
   })
-}
-
-function blendToSafe(chain, safe) {
-  chain.forEach((j, i) => {
-    if (!j.setJointValue || i >= safe.length) return
-    j.setJointValue((j.angle || 0) + (safe[i] - (j.angle || 0)) * 0.5)
-  })
-}
-
-function saveAngles(chain, buf) {
-  chain.forEach((j, i) => { if (i < buf.length) buf[i] = j.angle || 0 })
 }
 
 function curlToAngle(joint, curl) {
