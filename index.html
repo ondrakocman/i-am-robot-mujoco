@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>I Am Robot — Unitree G1 VR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+    body { background: #0a0a0a; font-family: 'Inter', system-ui, sans-serif; }
+
+    #ui-overlay {
+      position: fixed;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .vr-btn-row {
+      display: flex;
+      gap: 12px;
+      pointer-events: all;
+    }
+
+    .vr-btn {
+      pointer-events: all;
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      color: #00d4ff;
+      border: 1px solid #00d4ff44;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.2s;
+      box-shadow: 0 0 30px #00d4ff22;
+    }
+    .vr-btn:hover {
+      background: linear-gradient(135deg, #00d4ff22, #0066ff22);
+      box-shadow: 0 0 50px #00d4ff44;
+      border-color: #00d4ff88;
+    }
+    .vr-btn.locked {
+      color: #ff8844;
+      border-color: #ff884444;
+      box-shadow: 0 0 30px #ff884422;
+    }
+    .vr-btn.locked:hover {
+      background: linear-gradient(135deg, #ff884422, #ff440022);
+      box-shadow: 0 0 50px #ff884444;
+      border-color: #ff884488;
+    }
+
+    .mode-desc {
+      font-size: 11px;
+      opacity: 0.6;
+      margin-top: 2px;
+      font-weight: 400;
+    }
+
+    #status {
+      color: #ffffff66;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+    }
+
+    #instructions {
+      position: fixed;
+      top: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #ffffff44;
+      font-size: 12px;
+      text-align: center;
+      letter-spacing: 0.06em;
+      line-height: 1.8;
+    }
+  </style>
+  <script type="module" crossorigin src="/i-am-robot/assets/index-DmVbZZW4.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="ui-overlay">
+    <div class="vr-btn-row">
+      <button id="enter-vr-locked" class="vr-btn locked">
+        First Person
+        <div class="mode-desc">View locked to robot head</div>
+      </button>
+      <button id="enter-vr-unlocked" class="vr-btn">
+        Third Person
+        <div class="mode-desc">Static robot, free camera</div>
+      </button>
+    </div>
+    <span id="status">Quest 3 · Hand Tracking Required</span>
+  </div>
+  <div id="instructions">
+    CONNECT TO: <strong style="color:#00d4ff88">https://YOUR_IP:5173</strong> on Meta Quest 3 Browser<br/>
+    Allow Hand Tracking — You will see yourself as the Unitree G1 robot
+  </div>
+</body>
+</html>
